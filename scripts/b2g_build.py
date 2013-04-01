@@ -14,6 +14,7 @@ import xml.dom.minidom
 
 try:
     import simplejson as json
+    assert json
 except ImportError:
     import json
 
@@ -33,6 +34,7 @@ from mozharness.mozilla.tooltool import TooltoolMixin
 from mozharness.mozilla.buildbot import BuildbotMixin
 from mozharness.mozilla.purge import PurgeMixin
 from mozharness.mozilla.signing import SigningMixin
+from mozharness.mozilla.repo_manifest import load_manifest, rewrite_remotes, remove_project
 
 # B2G builds complain about java...but it doesn't seem to be a problem
 # Let's turn those into WARNINGS instead
@@ -110,14 +112,9 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                             config_options=self.config_options,
                             all_actions=[
                                 'clobber',
-                                'checkout-gecko',
+                                'checkout-sources',
                                 # Download via tooltool repo in gecko checkout or via explicit url
-                                'download-gonk',
-                                'unpack-gonk',
-                                'checkout-gaia',
-                                'checkout-gaia-l10n',
-                                'checkout-gecko-l10n',
-                                'checkout-compare-locales',
+                                'get-blobs',
                                 'update-source-manifest',
                                 'build',
                                 'build-symbols',
@@ -131,9 +128,8 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                                 'upload-source-manifest',
                             ],
                             default_actions=[
-                                'checkout-gecko',
-                                'download-gonk',
-                                'unpack-gonk',
+                                'checkout-sources',
+                                'get-blobs',
                                 'build',
                             ],
                             require_config_file=require_config_file,
@@ -363,6 +359,92 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         else:
             super(B2GBuild, self).clobber()
 
+    def checkout_sources(self):
+        dirs = self.query_abs_dirs()
+        # New behaviour!
+        # Get B2G, b2g-manifest
+        repos = [
+            {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/B2G.git', 'dest': dirs['work_dir']},
+            {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': 'b2g-manifest', 'branch': 'master'},
+        ]
+        print self.vcs_checkout_repos(repos)
+        # TODO: Error handling here?
+
+        # Now munge the manifest
+        manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', self.config['target'] + '.xml')
+        manifest = load_manifest(manifest_filename)
+
+        def mapping_func(r):
+            maps = {
+                'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
+                'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
+                'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
+                'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
+                'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
+                'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
+                'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
+            }
+            remote = r.getAttribute('fetch')
+            if remote in maps:
+                r.setAttribute('fetch', maps[remote])
+                return r
+            return None
+
+        rewrite_remotes(manifest, mapping_func)
+        # Remove gecko, since we'll be checking that out ourselves
+        gecko_node = remove_project(manifest, 'gecko.git')
+        if not gecko_node:
+            self.fatal("couldn't remove gecko from manifest")
+
+        # TODO: Add other projects?
+        manifest_dir = os.path.join(dirs['work_dir'], 'tmp_manifest')
+        self.rmtree(manifest_dir)
+        self.mkdir_p(manifest_dir)
+
+        manifest_filename = os.path.join(manifest_dir, self.config['target'] + '.xml')
+        manifest_file = open(manifest_filename, 'w')
+        manifest.writexml(manifest_file)
+        manifest_file.close()
+
+        # Make a fake git repo where we can put the manifest and point `repo` to
+        # it
+        self.run_command(['git', 'init'], cwd=manifest_dir, halt_on_failure=True)
+        self.run_command(['git', 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
+        self.run_command(['git', 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
+        self.run_command(['git', 'branch', '-m', 'master'], cwd=manifest_dir, halt_on_failure=True)
+
+        # Check it out!
+        common_dir = "/home/catlee/repos/repo"
+        self.mkdir_p(common_dir)
+        # Blow away .repo and start from scratch
+        # TODO: Can we avoid this?
+        self.rmtree(os.path.join(common_dir, '.repo'))
+        repo = os.path.join(dirs['work_dir'], 'repo')
+        self.run_command([repo, "init", "--mirror", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=common_dir, halt_on_failure=True)
+        self.run_command([repo, "sync", "--quiet"], cwd=common_dir, halt_on_failure=True)
+
+        # Now check it out into our local working directory
+        self.run_command([repo, "init", "--reference", common_dir, "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
+        self.run_command([repo, "sync", "--quiet"], cwd=dirs['work_dir'], halt_on_failure=True)
+
+        # Now we can checkout gecko
+        self.checkout_gecko()
+        self.checkout_gecko_l10n()
+        self.checkout_gaia_l10n()
+
+        return
+
+        # Old behaviour
+        self.checkout_gecko()
+        self.checkout_gaia()
+        self.checkout_gaia_l10n()
+        self.checkout_gecko_l10n()
+        self.checkout_compare_locales()
+
+    def get_blobs(self):
+        self.download_blobs()
+        self.unpack_blobs()
+
     def checkout_gecko(self):
         '''
         If you want a different revision of gecko to be used you can use the
@@ -387,7 +469,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             self.set_buildbot_property('revision', rev, write_to_file=True)
         self.set_buildbot_property('gecko_revision', rev, write_to_file=True)
 
-    def download_gonk(self):
+    def download_blobs(self):
         c = self.config
         dirs = self.query_abs_dirs()
         gonk_url = None
@@ -413,7 +495,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                 if retval is None:
                     self.fatal("failed to download gonk", exit_code=2)
 
-    def unpack_gonk(self):
+    def unpack_blobs(self):
         dirs = self.query_abs_dirs()
         mtime = int(os.path.getmtime(os.path.join(dirs['abs_work_dir'], 'gonk.tar.xz')))
         mtime_file = os.path.join(dirs['abs_work_dir'], '.gonk_mtime')
