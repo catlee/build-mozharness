@@ -66,4 +66,5 @@ config = {
     "purge_minsize": 15,
     "clobberer_url": "http://clobberer.pvt.build.mozilla.org/index.php",
     "is_automation": True,
+    'repo_mirror_dir": "/builds/git-shared/repo",
 }

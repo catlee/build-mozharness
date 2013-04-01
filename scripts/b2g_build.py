@@ -107,6 +107,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
     def __init__(self, require_config_file=False):
         self.gecko_config = None
         self.buildid = None
+        self.wrote_b2g_config = False
         LocalesMixin.__init__(self)
         BaseScript.__init__(self,
                             config_options=self.config_options,
@@ -198,21 +199,33 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         self.abs_dirs = abs_dirs
         return self.abs_dirs
 
+    def query_gecko_config_path(self):
+        conf_file = self.config.get('gecko_config')
+        if conf_file is None:
+            conf_file = os.path.join(
+                'b2g', 'config',
+                self.config.get('b2g_config_dir', self.config['target']),
+                'config.json'
+            )
+        return conf_file
+
     def load_gecko_config(self):
         if self.gecko_config:
             return self.gecko_config
 
         dirs = self.query_abs_dirs()
-        conf_file = self.config.get('gecko_config')
-        if conf_file is None:
-            conf_file = os.path.join(
-                dirs['src'], 'b2g', 'config',
-                self.config.get('b2g_config_dir', self.config['target']),
-                'config.json'
-            )
-        self.info("gecko_config file: %s" % conf_file)
-        self.run_command(['cat', conf_file])
-        self.gecko_config = json.load(open(conf_file))
+        conf_file = self.query_gecko_config_path()
+        if not os.path.isabs(conf_file):
+            conf_file = os.path.abspath(os.path.join(dirs['src'], conf_file))
+
+        if os.path.exists(conf_file):
+            self.info("gecko_config file: %s" % conf_file)
+            self.run_command(['cat', conf_file])
+            self.gecko_config = json.load(open(conf_file))
+            return self.gecko_config
+
+        # The file doesn't exist; let's try loading it remotely
+        self.gecko_config = self.query_remote_gecko_config()
         return self.gecko_config
 
     def query_repo(self):
@@ -323,7 +336,10 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         dirs = self.query_abs_dirs()
         gecko_config = self.load_gecko_config()
         env = self.query_env()
-        env.update(gecko_config.get('env', {}))
+        for k, v in gecko_config.get('env', {}).items():
+            v = v.format(workdir=dirs['abs_work_dir'],
+                         srcdir=os.path.abspath(dirs['src']))
+            env[k] = v
         if self.config.get('variant'):
             v = str(self.config['variant'])
             env['VARIANT'] = v
@@ -334,6 +350,43 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             env['MOZ_BUILD_DATE'] = self.buildbot_config['properties']['buildid']
 
         return env
+
+    def query_remote_gecko_config(self):
+        repo = self.query_repo()
+        # TODO: Hardcoding this sucks
+        if 'hg.mozilla.org' in repo:
+            rev = self.query_revision()
+            if rev is None:
+                rev = 'default'
+
+            config_path = self.query_gecko_config_path()
+            # Handle local files vs. in-repo files
+            url = "{baseurl}/raw-file/{rev}/{config_path}".format(
+                baseurl=repo,
+                rev=rev,
+                config_path=config_path)
+
+            self.info('Attempting to download %s' % url)
+
+            n = 1
+            attempts = 30
+            sleeptime = 30
+            while n <= attempts:
+                try:
+                    r = urllib2.urlopen(url, timeout=10)
+                    j = json.load(r)
+                    self.info("Got %s" % j)
+                    return j
+                except Exception, err:
+                    self.warning('Error: %s' % str(err))
+                    if n == attempts:
+                        self.fatal('Giving up on %s' % url)
+                    if sleeptime > 0:
+                        self.info('Sleeping %i seconds before retrying' % sleeptime)
+                        time.sleep(sleeptime)
+                    continue
+                finally:
+                    n += 1
 
     # Actions {{{2
     def clobber(self):
@@ -361,78 +414,84 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
     def checkout_sources(self):
         dirs = self.query_abs_dirs()
-        # New behaviour!
-        # Get B2G, b2g-manifest
-        repos = [
-            {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/B2G.git', 'dest': dirs['work_dir']},
-            {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': 'b2g-manifest', 'branch': 'master'},
-        ]
-        print self.vcs_checkout_repos(repos)
-        # TODO: Error handling here?
+        gecko_config = self.load_gecko_config()
+        if gecko_config.get('config_version') >= 2:
+            # New behaviour!
+            # Get B2G, b2g-manifest
+            repos = [
+                {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/B2G.git', 'dest': dirs['work_dir']},
+                {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': 'b2g-manifest', 'branch': 'master'},
+            ]
+            self.vcs_checkout_repos(repos)
+            # TODO: Error handling here?
 
-        # Now munge the manifest
-        manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', self.config['target'] + '.xml')
-        manifest = load_manifest(manifest_filename)
+            # Now munge the manifest
+            manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', self.config['target'] + '.xml')
+            manifest = load_manifest(manifest_filename)
 
-        def mapping_func(r):
-            maps = {
-                'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
-                'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
-                'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
-                'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
-                'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
-                'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
-                'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
-            }
-            remote = r.getAttribute('fetch')
-            if remote in maps:
-                r.setAttribute('fetch', maps[remote])
-                return r
-            return None
+            def mapping_func(r):
+                maps = {
+                    'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
+                    'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
+                    'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
+                    'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
+                    'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
+                    'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
+                    'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
+                }
+                remote = r.getAttribute('fetch')
+                if remote in maps:
+                    r.setAttribute('fetch', maps[remote])
+                    return r
+                return None
 
-        rewrite_remotes(manifest, mapping_func)
-        # Remove gecko, since we'll be checking that out ourselves
-        gecko_node = remove_project(manifest, 'gecko.git')
-        if not gecko_node:
-            self.fatal("couldn't remove gecko from manifest")
+            rewrite_remotes(manifest, mapping_func)
+            # Remove gecko, since we'll be checking that out ourselves
+            gecko_node = remove_project(manifest, 'gecko.git')
+            if not gecko_node:
+                self.fatal("couldn't remove gecko from manifest")
 
-        # TODO: Add other projects?
-        manifest_dir = os.path.join(dirs['work_dir'], 'tmp_manifest')
-        self.rmtree(manifest_dir)
-        self.mkdir_p(manifest_dir)
+            # TODO: Add other projects? like add l10n here?
+            manifest_dir = os.path.join(dirs['work_dir'], 'tmp_manifest')
+            self.rmtree(manifest_dir)
+            self.mkdir_p(manifest_dir)
 
-        manifest_filename = os.path.join(manifest_dir, self.config['target'] + '.xml')
-        manifest_file = open(manifest_filename, 'w')
-        manifest.writexml(manifest_file)
-        manifest_file.close()
+            manifest_filename = os.path.join(manifest_dir, self.config['target'] + '.xml')
+            manifest_file = open(manifest_filename, 'w')
+            manifest.writexml(manifest_file)
+            manifest_file.close()
 
-        # Make a fake git repo where we can put the manifest and point `repo` to
-        # it
-        self.run_command(['git', 'init'], cwd=manifest_dir, halt_on_failure=True)
-        self.run_command(['git', 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
-        self.run_command(['git', 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
-        self.run_command(['git', 'branch', '-m', 'master'], cwd=manifest_dir, halt_on_failure=True)
+            # Make a fake git repo where we can put the manifest and point `repo` to
+            # it
+            self.run_command(['git', 'init'], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command(['git', 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command(['git', 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command(['git', 'branch', '-m', 'master'], cwd=manifest_dir, halt_on_failure=True)
 
-        # Check it out!
-        common_dir = "/home/catlee/repos/repo"
-        self.mkdir_p(common_dir)
-        # Blow away .repo and start from scratch
-        # TODO: Can we avoid this?
-        self.rmtree(os.path.join(common_dir, '.repo'))
-        repo = os.path.join(dirs['work_dir'], 'repo')
-        self.run_command([repo, "init", "--mirror", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=common_dir, halt_on_failure=True)
-        self.run_command([repo, "sync", "--quiet"], cwd=common_dir, halt_on_failure=True)
+            # Check it out!
+            if 'repo_mirror_dir' in self.config:
+                repo_mirror_dir = self.config['repo_mirror_dir']
+                self.mkdir_p(repo_mirror_dir)
+                # Blow away .repo and start from scratch
+                # TODO: Can we avoid this?
+                self.rmtree(os.path.join(repo_mirror_dir, '.repo'))
+                repo = os.path.join(dirs['work_dir'], 'repo')
+                self.run_command([repo, "init", "--mirror", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=repo_mirror_dir, halt_on_failure=True)
+                self.run_command([repo, "sync", "--quiet"], cwd=repo_mirror_dir, halt_on_failure=True)
 
-        # Now check it out into our local working directory
-        self.run_command([repo, "init", "--reference", common_dir, "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
-        self.run_command([repo, "sync", "--quiet"], cwd=dirs['work_dir'], halt_on_failure=True)
+                # Now check it out into our local working directory
+                self.run_command([repo, "init", "--reference", repo_mirror_dir, "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
+            else:
+                # Non-mirror mode
+                self.run_command([repo, "init", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
+            self.run_command([repo, "sync", "--quiet"], cwd=dirs['work_dir'], halt_on_failure=True)
 
-        # Now we can checkout gecko
-        self.checkout_gecko()
-        self.checkout_gecko_l10n()
-        self.checkout_gaia_l10n()
-
-        return
+            # Now we can checkout gecko and other stuff
+            self.checkout_gecko()
+            self.checkout_gecko_l10n()
+            self.checkout_gaia_l10n()
+            self.checkout_compare_locales()
+            return
 
         # Old behaviour
         self.checkout_gecko()
@@ -444,6 +503,41 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
     def get_blobs(self):
         self.download_blobs()
         self.unpack_blobs()
+
+    def write_b2g_config(self):
+        if self.wrote_b2g_config:
+            return
+
+        dirs = self.query_abs_dirs()
+
+        # Write .config to point to the correct object directory for gecko
+        # and specifies which target to use
+        device_name = self.config['target']
+        device = {
+            'emulator': 'generic',
+            'pandaboard': 'panda',
+        }.get(device_name, device_name)
+
+        # TODO: this re-implements some config.sh logic
+        # TODO: write to .userconfig if we're using snapshots
+        lines = [
+            "GECKO_OBJDIR=%s" % self.objdir,
+            "DEVICE_NAME=%s" % device_name,
+            "DEVICE=%s" % device,
+        ]
+        # TODO: eh? what's this for? config.sh does it, but why?
+        if device_name == 'emulator':
+            lines.append("LUNCH=full-eng")
+
+        # Make sure we get a blank line at the end
+        lines.append("")
+
+        self.write_to_file(
+            os.path.join(dirs['work_dir'], '.config'),
+            "\n".join(lines)
+        )
+
+        self.wrote_b2g_config = True
 
     def checkout_gecko(self):
         '''
@@ -713,11 +807,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             env['PYTHONPATH'] = os.environ.get('PYTHONPATH', '')
             env['PYTHONPATH'] += ':%s' % os.path.join(dirs['compare_locales_dir'], 'lib')
 
-        # Write .userconfig to point to the correct object directory for gecko
-        # Normally this is embedded inside the .config file included with the snapshot
-        self.write_to_file(
-            os.path.join(dirs['work_dir'], '.userconfig'),
-            "GECKO_OBJDIR=%s\n" % self.objdir)
+        self.write_b2g_config()
 
         if 'mock_target' in gecko_config:
             # initialize mock
@@ -751,11 +841,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         cmd = ['./build.sh', 'buildsymbols']
         env = self.query_build_env()
 
-        # Write .userconfig to point to the correct object directory for gecko
-        # Normally this is embedded inside the .config file included with the snapshot
-        self.write_to_file(
-            os.path.join(dirs['work_dir'], '.userconfig'),
-            "GECKO_OBJDIR=%s\n" % self.objdir)
+        self.write_b2g_config()
 
         if 'mock_target' in gecko_config:
             # initialize mock
@@ -788,12 +874,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         cmd = ['./build.sh', 'gecko-update-full']
         env = self.query_build_env()
 
-        # Write .userconfig to point to the correct object directory for gecko
-        # Normally this is embedded inside the .config file included with the snapshot
-        # TODO: factor this out so it doesn't get run twice
-        self.write_to_file(
-            os.path.join(dirs['work_dir'], '.userconfig'),
-            "GECKO_OBJDIR=%s\n" % self.objdir)
+        self.write_b2g_config()
 
         if 'mock_target' in gecko_config:
             # initialize mock
