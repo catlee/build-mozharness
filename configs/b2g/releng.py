@@ -3,13 +3,8 @@ import os
 config = {
     "default_actions": [
         'clobber',
-        'checkout-gecko',
-        'download-gonk',
-        'unpack-gonk',
-        'checkout-gaia',
-        'checkout-gaia-l10n',
-        'checkout-gecko-l10n',
-        'checkout-compare-locales',
+        'checkout-sources',
+        'get-blobs',
         'update-source-manifest',
         'build',
         'build-symbols',
