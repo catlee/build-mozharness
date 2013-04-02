@@ -4,8 +4,7 @@ config = {
     "default_actions": [
         'clobber',
         'checkout-gecko',
-        'download-gonk',
-        'unpack-gonk',
+        'get-blobs',
         'checkout-gaia',
         'checkout-gaia-l10n',
         'checkout-gecko-l10n',

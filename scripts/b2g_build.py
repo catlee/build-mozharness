@@ -443,6 +443,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', manifest_filename)
             manifest = load_manifest(manifest_filename)
 
+            # TODO: Move these mappings out to a config somewhere
             def mapping_func(r):
                 maps = {
                     'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
