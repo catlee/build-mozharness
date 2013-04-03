@@ -11,6 +11,7 @@ import urllib2
 import urlparse
 import time
 import xml.dom.minidom
+import functools
 
 try:
     import simplejson as json
@@ -42,6 +43,28 @@ B2GMakefileErrorList = MakefileErrorList + [
     {'substr': r'''NS_ERROR_FILE_ALREADY_EXISTS: Component returned failure code''', 'level': ERROR},
 ]
 B2GMakefileErrorList.insert(0, {'substr': r'/bin/bash: java: command not found', 'level': WARNING})
+
+# TODO: Move to a config file
+MAPPINGS = {
+    'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
+    'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
+    'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
+    'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
+    'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
+    'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
+    'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
+}
+
+
+def map_remote(r, mappings):
+    """
+    Helper function for mapping git remotes
+    """
+    remote = r.getAttribute('fetch')
+    if remote in mappings:
+        r.setAttribute('fetch', mappings[remote])
+        return r
+    return None
 
 
 class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, TransferMixin,
@@ -443,22 +466,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', manifest_filename)
             manifest = load_manifest(manifest_filename)
 
-            # TODO: Move these mappings out to a config somewhere
-            def mapping_func(r):
-                maps = {
-                    'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
-                    'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
-                    'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
-                    'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
-                    'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
-                    'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
-                    'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
-                }
-                remote = r.getAttribute('fetch')
-                if remote in maps:
-                    r.setAttribute('fetch', maps[remote])
-                    return r
-                return None
+            mapping_func = functools.partial(map_remote, mappings=MAPPINGS)
 
             rewrite_remotes(manifest, mapping_func)
             # Remove gecko, since we'll be checking that out ourselves
@@ -510,7 +518,6 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             self.run_command([repo, "sync", "--quiet"], cwd=dirs['work_dir'], halt_on_failure=True)
 
             # output our sources.xml, make a copy for update_sources_xml()
-            #self.run_command(["cp", "-p", manifest_filename, "sources.xml"], cwd=dirs["work_dir"])
             self.run_command(["./gonk-misc/add-revision.py", "-o", "sources.xml", "--force", ".repo/manifest.xml"], cwd=dirs["work_dir"], halt_on_failure=True)
             self.run_command(["cat", "sources.xml"], cwd=dirs['work_dir'], halt_on_failure=True)
             self.run_command(["cp", "-p", "sources.xml", "sources.xml.original"], cwd=dirs['work_dir'], halt_on_failure=True)
