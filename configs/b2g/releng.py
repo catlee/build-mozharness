@@ -16,7 +16,7 @@ config = {
     ],
     "ssh_key": os.path.expanduser("~/.ssh/b2gbld_dsa"),
     "ssh_user": "b2gbld",
-    "upload_remote_host": "pvtbuilds2.dmz.scl3.mozilla.com",
+    "upload_remote_host": "dev-stage01.srv.releng.scl3.mozilla.com",
     "upload_remote_basepath": "/pub/mozilla.org/b2g/tinderbox-builds",
     "upload_remote_nightly_basepath": "/pub/mozilla.org/b2g/nightly",
     "upload_dep_target_exclusions": ["unagi", "otoro"],
