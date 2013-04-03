@@ -76,29 +76,3 @@ def remove_project(manifest, name):
         if node.getAttribute('name') == name:
             node.parentNode.removeChild(node)
             return node
-
-
-def main():
-    man = load_manifest("/home/catlee/mozilla/b2g-manifest/emulator.xml")
-
-    maps = {
-        'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
-        'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
-        'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
-        'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
-        'git://github.com/mozilla/': 'https://git.mozilla.org/',
-        'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
-    }
-
-    def f(r):
-        remote = r.getAttribute('fetch')
-        if remote in maps:
-            r.setAttribute('fetch', maps[remote])
-            return r
-        return None
-
-    rewrite_remotes(man, f)
-    print man.toxml()
-
-if __name__ == '__main__':
-    main()
