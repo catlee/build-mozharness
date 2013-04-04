@@ -72,7 +72,16 @@ def remove_project(manifest, name):
     """
     Removes a project from manifest
     """
+    node = get_project(manifest, name)
+    if node:
+        node.parentNode.removeChild(node)
+    return node
+
+
+def get_project(manifest, name):
+    """
+    Gets a project node from the manifest by name
+    """
     for node in manifest.getElementsByTagName('project'):
         if node.getAttribute('name') == name:
-            node.parentNode.removeChild(node)
             return node

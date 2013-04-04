@@ -35,7 +35,7 @@ from mozharness.mozilla.tooltool import TooltoolMixin
 from mozharness.mozilla.buildbot import BuildbotMixin
 from mozharness.mozilla.purge import PurgeMixin
 from mozharness.mozilla.signing import SigningMixin
-from mozharness.mozilla.repo_manifest import load_manifest, rewrite_remotes, remove_project
+from mozharness.mozilla.repo_manifest import load_manifest, rewrite_remotes, remove_project, get_project
 
 # B2G builds complain about java...but it doesn't seem to be a problem
 # Let's turn those into WARNINGS instead
@@ -43,17 +43,6 @@ B2GMakefileErrorList = MakefileErrorList + [
     {'substr': r'''NS_ERROR_FILE_ALREADY_EXISTS: Component returned failure code''', 'level': ERROR},
 ]
 B2GMakefileErrorList.insert(0, {'substr': r'/bin/bash: java: command not found', 'level': WARNING})
-
-# TODO: Move to a config file
-MAPPINGS = {
-    'https://android.googlesource.com/': 'https://git.mozilla.org/external/aosp',
-    'git://codeaurora.org/': 'https://git.mozilla.org/external/caf',
-    'https://git.mozilla.org/b2g': 'https://git.mozilla.org/b2g',
-    'git://github.com/mozilla-b2g/': 'https://git.mozilla.org/b2g',
-    'git://github.com/mozilla/': 'https://git.mozilla.org/b2g',
-    'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
-    'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
-}
 
 
 def map_remote(r, mappings):
@@ -189,6 +178,8 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                                 'compare_locales_repo': 'http://hg.mozilla.org/build/compare-locales',
                                 'compare_locales_rev': 'RELEASE_AUTOMATION',
                                 'compare_locales_vcs': 'hgtool',
+                                'repo_repo': "https://git.mozilla.org/external/google/gerrit/git-repo.git",
+                                'repo_remote_mappings': {},
                             },
                             )
 
@@ -454,9 +445,10 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         if gecko_config.get('config_version') >= 2:
             # New behaviour!
             # Get B2G, b2g-manifest
+            b2g_manifest_branch = gecko_config.get('b2g_manifest_branch', 'master')
             repos = [
                 {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/B2G.git', 'dest': dirs['work_dir']},
-                {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': os.path.join(dirs['work_dir'], 'b2g-manifest'), 'branch': 'master'},
+                {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': os.path.join(dirs['work_dir'], 'b2g-manifest'), 'branch': b2g_manifest_branch},
             ]
             self.vcs_checkout_repos(repos)
             # TODO: Error handling here?
@@ -466,7 +458,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             manifest_filename = os.path.join(dirs['work_dir'], 'b2g-manifest', manifest_filename)
             manifest = load_manifest(manifest_filename)
 
-            mapping_func = functools.partial(map_remote, mappings=MAPPINGS)
+            mapping_func = functools.partial(map_remote, mappings=self.config['repo_remote_mappings'])
 
             rewrite_remotes(manifest, mapping_func)
             # Remove gecko, since we'll be checking that out ourselves
@@ -489,13 +481,15 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             self.run_command(['git', 'init'], cwd=manifest_dir, halt_on_failure=True)
             self.run_command(['git', 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
             self.run_command(['git', 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
-            self.run_command(['git', 'branch', '-m', 'master'], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command(['git', 'branch', '-m', b2g_manifest_branch], cwd=manifest_dir, halt_on_failure=True)
 
             # We need to reset gaia, since the build process locally modifies
             # files here, which can break sync later. \o/
             gaia_dir = os.path.join(dirs['work_dir'], 'gaia')
             if os.path.exists(gaia_dir):
                 self.run_command(['git', 'reset', '--hard'], cwd=gaia_dir)
+
+            repo_repo = self.config['repo_repo']
 
             # Check it out!
             if 'repo_mirror_dir' in self.config:
@@ -505,24 +499,27 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                 # TODO: Can we avoid this?
                 self.rmtree(os.path.join(repo_mirror_dir, '.repo'))
                 repo = os.path.join(dirs['work_dir'], 'repo')
-                # TODO: Point to our own mirror of repo tool's source
-                self.run_command([repo, "init", "-q", "--mirror", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=repo_mirror_dir, halt_on_failure=True)
+                self.run_command([repo, "init", "--repo-url", repo_repo, "-q", "--mirror", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', b2g_manifest_branch], cwd=repo_mirror_dir, halt_on_failure=True)
                 self.run_command([repo, "sync", "--quiet"], cwd=repo_mirror_dir, halt_on_failure=True)
 
                 # Now check it out into our local working directory
-                self.run_command([repo, "init", "-q", "--reference", repo_mirror_dir, "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
+                self.run_command([repo, "init", "--repo-url", repo_repo, "-q", "--reference", repo_mirror_dir, "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', b2g_manifest_branch], cwd=dirs['work_dir'], halt_on_failure=True)
             else:
                 # Non-mirror mode
-                # TODO: Point to our own mirror of repo tool's source
-                self.run_command([repo, "init", "-q", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', 'master'], cwd=dirs['work_dir'], halt_on_failure=True)
+                self.run_command([repo, "init", "--repo-url", repo_repo, "-q", "-u", manifest_dir, "-m", self.config['target'] + '.xml', '-b', b2g_manifest_branch], cwd=dirs['work_dir'], halt_on_failure=True)
             self.run_command([repo, "sync", "--quiet"], cwd=dirs['work_dir'], halt_on_failure=True)
 
             # output our sources.xml, make a copy for update_sources_xml()
             self.run_command(["./gonk-misc/add-revision.py", "-o", "sources.xml", "--force", ".repo/manifest.xml"], cwd=dirs["work_dir"], halt_on_failure=True)
             self.run_command(["cat", "sources.xml"], cwd=dirs['work_dir'], halt_on_failure=True)
             self.run_command(["cp", "-p", "sources.xml", "sources.xml.original"], cwd=dirs['work_dir'], halt_on_failure=True)
-
-            # TODO: Now set gaia_revision, etc.
+            manifest = load_manifest(os.path.join(dirs['work_dir'], 'sources.xml'))
+            gaia_node = get_project(manifest, "gaia.git")
+            gaia_rev = gaia_node.getAttribute("revision")
+            self.set_buildbot_property("gaia_revision", gaia_rev, write_to_file=True)
+            # TODO: Format this properly!
+            gaia_repo = "https://path/to/gaia.git/"
+            self.info("TinderboxPrint: gaia_revlink: %s/rev/%s" % (gaia_repo, gaia_rev))
 
             # Now we can checkout gecko and other stuff
             self.checkout_gecko()
