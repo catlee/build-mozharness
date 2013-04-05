@@ -393,27 +393,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                 rev=rev,
                 config_path=config_path)
 
-            self.info('Attempting to download %s' % url)
-
-            n = 1
-            attempts = 30
-            sleeptime = 30
-            while n <= attempts:
-                try:
-                    r = urllib2.urlopen(url, timeout=10)
-                    j = json.load(r)
-                    self.info("Got %s" % j)
-                    return j
-                except Exception, err:
-                    self.warning('Error: %s' % str(err))
-                    if n == attempts:
-                        self.fatal('Giving up on %s' % url)
-                    if sleeptime > 0:
-                        self.info('Sleeping %i seconds before retrying' % sleeptime)
-                        time.sleep(sleeptime)
-                    continue
-                finally:
-                    n += 1
+            return self.retry(self.load_json_from_url, args=(url,))
 
     # Actions {{{2
     def clobber(self):
@@ -478,16 +458,17 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
             # Make a fake git repo where we can put the manifest and point `repo` to
             # it
-            self.run_command(['git', 'init'], cwd=manifest_dir, halt_on_failure=True)
-            self.run_command(['git', 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
-            self.run_command(['git', 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
-            self.run_command(['git', 'branch', '-m', b2g_manifest_branch], cwd=manifest_dir, halt_on_failure=True)
+            git = self.query_exe('git')
+            self.run_command([git, 'init'], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command([git, 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command([git, 'commit', '-m', 'manifest'], cwd=manifest_dir, halt_on_failure=True)
+            self.run_command([git, 'branch', '-m', b2g_manifest_branch], cwd=manifest_dir, halt_on_failure=True)
 
             # We need to reset gaia, since the build process locally modifies
             # files here, which can break sync later. \o/
             gaia_dir = os.path.join(dirs['work_dir'], 'gaia')
             if os.path.exists(gaia_dir):
-                self.run_command(['git', 'reset', '--hard'], cwd=gaia_dir)
+                self.run_command([git, 'reset', '--hard'], cwd=gaia_dir)
 
             repo_repo = self.config['repo_repo']
 
