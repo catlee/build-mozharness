@@ -35,7 +35,8 @@ from mozharness.mozilla.tooltool import TooltoolMixin
 from mozharness.mozilla.buildbot import BuildbotMixin
 from mozharness.mozilla.purge import PurgeMixin
 from mozharness.mozilla.signing import SigningMixin
-from mozharness.mozilla.repo_manifest import load_manifest, rewrite_remotes, remove_project, get_project
+from mozharness.mozilla.repo_manifest import (load_manifest, rewrite_remotes,
+                                              remove_project, get_project, get_remote)
 
 # B2G builds complain about java...but it doesn't seem to be a problem
 # Let's turn those into WARNINGS instead
@@ -378,6 +379,35 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
         return env
 
+    def query_hgweb_url(self, repo, rev, filename=None):
+        if filename:
+            url = "{baseurl}/raw-file/{rev}/{filename}".format(
+                baseurl=repo,
+                rev=rev,
+                filename=filename)
+        else:
+            url = "{baseurl}/rev/{rev}".format(
+                baseurl=repo,
+                rev=rev)
+        return url
+
+    def query_gitweb_url(self, repo, rev, filename=None):
+        bits = urlparse.urlparse(repo)
+        if filename:
+            url = "{scheme}://{host}/?p={repo};a=blob;f={filename};h={rev}".format(
+                scheme=bits.scheme,
+                host=bits.netloc,
+                repo=bits.path,
+                filename=filename,
+                rev=rev)
+        else:
+            url = "{scheme}://{host}/?p={repo};a=tree;h={rev}".format(
+                scheme=bits.scheme,
+                host=bits.netloc,
+                repo=bits.path,
+                rev=rev)
+        return url
+
     def query_remote_gecko_config(self):
         repo = self.query_repo()
         # TODO: Hardcoding this sucks
@@ -388,11 +418,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
             config_path = self.query_gecko_config_path()
             # Handle local files vs. in-repo files
-            url = "{baseurl}/raw-file/{rev}/{config_path}".format(
-                baseurl=repo,
-                rev=rev,
-                config_path=config_path)
-
+            url = self.query_hgweb_url(repo, rev, config_path)
             return self.retry(self.load_json_from_url, args=(url,))
 
     # Actions {{{2
@@ -431,7 +457,6 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                 {'vcs': 'gittool', 'repo': 'https://git.mozilla.org/b2g/b2g-manifest.git', 'dest': os.path.join(dirs['work_dir'], 'b2g-manifest'), 'branch': b2g_manifest_branch},
             ]
             self.vcs_checkout_repos(repos)
-            # TODO: Error handling here?
 
             # Now munge the manifest
             manifest_filename = gecko_config.get('b2g_manifest', self.config['target'] + '.xml')
@@ -446,7 +471,9 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             if not gecko_node:
                 self.fatal("couldn't remove gecko from manifest")
 
-            # TODO: Add other projects? like add l10n here?
+            # repo requires a git repo to work with
+            # so we create a temporary repo, put our manifest file into it, and
+            # commit it
             manifest_dir = os.path.join(dirs['work_dir'], 'tmp_manifest')
             self.rmtree(manifest_dir)
             self.mkdir_p(manifest_dir)
@@ -456,8 +483,6 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             manifest.writexml(manifest_file)
             manifest_file.close()
 
-            # Make a fake git repo where we can put the manifest and point `repo` to
-            # it
             git = self.query_exe('git')
             self.run_command([git, 'init'], cwd=manifest_dir, halt_on_failure=True)
             self.run_command([git, 'add', manifest_filename], cwd=manifest_dir, halt_on_failure=True)
@@ -497,10 +522,11 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             manifest = load_manifest(os.path.join(dirs['work_dir'], 'sources.xml'))
             gaia_node = get_project(manifest, "gaia.git")
             gaia_rev = gaia_node.getAttribute("revision")
+            gaia_remote = get_remote(manifest, gaia_node.getAttribute('remote'))
+            gaia_repo = "%s/%s" % (gaia_remote, gaia_node.getAttribute('name'))
+            gaia_url = self.query_gitweb_url(gaia_repo, gaia_rev)
             self.set_buildbot_property("gaia_revision", gaia_rev, write_to_file=True)
-            # TODO: Format this properly!
-            gaia_repo = "https://path/to/gaia.git/"
-            self.info("TinderboxPrint: gaia_revlink: %s/rev/%s" % (gaia_repo, gaia_rev))
+            self.info("TinderboxPrint: gaia_revlink: %s" % gaia_url)
 
             # Now we can checkout gecko and other stuff
             self.checkout_gecko()

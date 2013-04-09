@@ -85,3 +85,8 @@ def get_project(manifest, name):
     for node in manifest.getElementsByTagName('project'):
         if node.getAttribute('name') == name:
             return node
+
+def get_remote(manifest, name):
+    for node in manifest.getElementsByTagName('remote'):
+        if node.getAttribute('name') == name:
+            return node
