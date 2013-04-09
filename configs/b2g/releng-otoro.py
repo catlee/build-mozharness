@@ -23,7 +23,7 @@ config = {
     "upload_remote_host": "dev-stage01.srv.releng.scl3.mozilla.com",
     "upload_remote_basepath": "/pub/mozilla.org/b2g/tinderbox-builds",
     "upload_remote_nightly_basepath": "/pub/mozilla.org/b2g/nightly",
-    "upload_dep_target_exclusions": ["unagi", "otoro", "inari", "leo"],
+    "upload_dep_target_exclusions": ["unagi", "otoro", "inari", "leo", "hamachi"],
     "tooltool_servers": ["http://runtime-binaries.pvt.build.mozilla.org/tooltool/"],
     "gittool_share_base": "/builds/git-shared/git",
     "gittool_base_mirror_urls": [],
