@@ -523,7 +523,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             gaia_node = get_project(manifest, "gaia.git")
             gaia_rev = gaia_node.getAttribute("revision")
             gaia_remote = get_remote(manifest, gaia_node.getAttribute('remote'))
-            gaia_repo = "%s/%s" % (gaia_remote, gaia_node.getAttribute('name'))
+            gaia_repo = "%s/%s" % (gaia_remote.getAttribute('fetch'), gaia_node.getAttribute('name'))
             gaia_url = self.query_gitweb_url(gaia_repo, gaia_rev)
             self.set_buildbot_property("gaia_revision", gaia_rev, write_to_file=True)
             self.info("TinderboxPrint: gaia_revlink: %s" % gaia_url)
