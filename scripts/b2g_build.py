@@ -393,18 +393,19 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
     def query_gitweb_url(self, repo, rev, filename=None):
         bits = urlparse.urlparse(repo)
+        repo = bits.path.lstrip('/')
         if filename:
             url = "{scheme}://{host}/?p={repo};a=blob;f={filename};h={rev}".format(
                 scheme=bits.scheme,
                 host=bits.netloc,
-                repo=bits.path,
+                repo=repo,
                 filename=filename,
                 rev=rev)
         else:
             url = "{scheme}://{host}/?p={repo};a=tree;h={rev}".format(
                 scheme=bits.scheme,
                 host=bits.netloc,
-                repo=bits.path,
+                repo=repo,
                 rev=rev)
         return url
 
