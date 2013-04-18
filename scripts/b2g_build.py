@@ -57,8 +57,8 @@ def map_remote(r, mappings):
     return None
 
 
-class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, TransferMixin,
-               BuildbotMixin, PurgeMixin, GaiaLocalesMixin, SigningMixin):
+class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, TooltoolMixin,
+               TransferMixin, BuildbotMixin, GaiaLocalesMixin, SigningMixin):
     config_options = [
         [["--repo"], {
             "dest": "repo",
@@ -114,6 +114,10 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
             "type": "string",
             "dest": "additional_source_tarballs",
             "help": "Additional source tarballs to extract",
+        }],
+        [["--update-channel"], {
+            "dest": "update_channel",
+            "help": "b2g update channel",
         }],
     ]
 
@@ -181,6 +185,7 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
                                 'compare_locales_vcs': 'hgtool',
                                 'repo_repo': "https://git.mozilla.org/external/google/gerrit/git-repo.git",
                                 'repo_remote_mappings': {},
+                                'update_channel': 'nightly',
                             },
                             )
 
@@ -377,6 +382,9 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
         if self.buildbot_config and 'buildid' in self.buildbot_config.get('properties', {}):
             env['MOZ_BUILD_DATE'] = self.buildbot_config['properties']['buildid']
 
+        if 'B2G_UPDATE_CHANNEL' not in env:
+            env['B2G_UPDATE_CHANNEL'] = self.config['update_channel']
+
         return env
 
     def query_hgweb_url(self, repo, rev, filename=None):
@@ -424,27 +432,14 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
 
     # Actions {{{2
     def clobber(self):
-        c = self.config
-        if c.get('is_automation'):
-            # Nightly builds always clobber
-            do_clobber = False
-            if self.query_is_nightly():
-                self.info("Clobbering because we're a nightly build")
-                do_clobber = True
-            if c.get('force_clobber'):
-                self.info("Clobbering because our config forced us to")
-                do_clobber = True
-            if do_clobber:
-                super(B2GBuild, self).clobber()
-            else:
-                # Delete the upload dir so we don't upload previous stuff by accident
-                dirs = self.query_abs_dirs()
-                self.rmtree(dirs['abs_upload_dir'])
-                self.rmtree(dirs['testdata_dir'])
-            # run purge_builds / check clobberer
-            self.purge_builds()
-        else:
-            super(B2GBuild, self).clobber()
+        dirs = self.query_abs_dirs()
+        PurgeMixin.clobber(
+            self,
+            always_clobber_dirs=[
+                dirs['abs_upload_dir'],
+                dirs['testdata_dir'],
+            ],
+        )
 
     def checkout_sources(self):
         dirs = self.query_abs_dirs()
@@ -1200,11 +1195,10 @@ class B2GBuild(LocalesMixin, MockMixin, BaseScript, VCSMixin, TooltoolMixin, Tra
     def make_socorro_json(self):
         self.info("Creating socorro.json...")
         dirs = self.query_abs_dirs()
-        manifest_config = self.config.get('manifest', {})
         socorro_dict = {
             'buildid': self.query_buildid(),
             'version': self.query_version(),
-            'update_channel': manifest_config.get('update_channel'),
+            'update_channel': self.config.get('update_channel'),
             #'beta_number': n/a until we build b2g beta releases
         }
         file_path = os.path.join(dirs['abs_work_dir'], 'socorro.json')

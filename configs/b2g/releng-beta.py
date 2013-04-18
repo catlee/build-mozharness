@@ -52,7 +52,6 @@ config = {
         },
         "translate_hg_to_git": True,
         "translate_base_url": "http://cruncher.build.mozilla.org/mapper",
-        "update_channel": "beta",
     },
     "env": {
         "CCACHE_DIR": "/builds/ccache",
@@ -64,7 +63,6 @@ config = {
         "SYMBOL_SERVER_SSH_KEY": "/home/mock_mozilla/.ssh/b2gbld_dsa",
         "SYMBOL_SERVER_PATH": "/mnt/netapp/breakpad/symbols_b2g/",
         "POST_SYMBOL_UPLOAD_CMD": "/usr/local/bin/post-symbol-upload.py",
-        "B2G_UPDATE_CHANNEL": "beta",
     },
     "purge_minsize": 15,
     "clobberer_url": "http://clobberer.pvt.build.mozilla.org/index.php",
@@ -79,4 +77,5 @@ config = {
         'https://git.mozilla.org/releases': 'https://git.mozilla.org/releases',
         'http://android.git.linaro.org/git-ro/': 'https://git.mozilla.org/external/linaro',
     },
+    "update_channel": "beta",
 }
