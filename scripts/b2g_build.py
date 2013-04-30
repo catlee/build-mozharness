@@ -119,6 +119,10 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
             "dest": "update_channel",
             "help": "b2g update channel",
         }],
+        [["--publish-channel"], {
+            "dest": "publish_channel",
+            "help": "channel where build is published to",
+        }],
     ]
 
     def __init__(self, require_config_file=False):
@@ -186,6 +190,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
                                 'repo_repo': "https://git.mozilla.org/external/google/gerrit/git-repo.git",
                                 'repo_remote_mappings': {},
                                 'update_channel': 'nightly',
+                                'publish_channel': None,
                             },
                             )
 
@@ -432,6 +437,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
 
     # Actions {{{2
     def clobber(self):
+        return
         dirs = self.query_abs_dirs()
         PurgeMixin.clobber(
             self,
@@ -1066,6 +1072,15 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
                 self.debug("removing %s" % tmpdir)
                 self.rmtree(tmpdir)
 
+        # Copy gaia profile
+        if gecko_config.get('package_gaia', True):
+            zip_name = os.path.join(dirs['work_dir'], "gaia.zip")
+            self.info("creating %s" % zip_name)
+            cmd = ['zip', '-r', '-9', '-u', zip_name, 'gaia/profile']
+            if self.run_command(cmd, cwd=dirs['work_dir']) != 0:
+                self.fatal("problem zipping up gaia")
+            self.copy_to_upload_dir(zip_name)
+
         self.info("copying files to upload directory")
         files = []
 
@@ -1362,12 +1377,21 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         upload_dir = dirs['abs_upload_dir'] + '-updates'
         # upload dated files first to be sure that update.xml doesn't
         # point to not existing files
+        update_channel = self.config['update_channel']
+        publish_channel = self.config.get('publish_channel', update_channel)
+        if publish_channel is None:
+            publish_channel = update_channel
+        upload_remote_basepath = self.config['update']['upload_remote_basepath']
+        upload_remote_basepath = upload_remote_basepath.format(
+            update_channel=update_channel,
+            publish_channel=publish_channel,
+        )
         retval = self.rsync_upload_directory(
             upload_dir,
             self.config['update']['ssh_key'],
             self.config['update']['ssh_user'],
             self.config['update']['upload_remote_host'],
-            self.config['update']['upload_remote_basepath'],
+            upload_remote_basepath,
             rsync_options=['-azv', "--exclude=update.xml"]
         )
         if retval is not None:
@@ -1383,7 +1407,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
                 self.config['update']['ssh_key'],
                 self.config['update']['ssh_user'],
                 self.config['update']['upload_remote_host'],
-                self.config['update']['upload_remote_basepath'],
+                upload_remote_basepath,
             )
 
             if retval is not None:
