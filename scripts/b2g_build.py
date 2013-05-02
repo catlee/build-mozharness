@@ -119,6 +119,10 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
             "dest": "update_channel",
             "help": "b2g update channel",
         }],
+        [["--nightly-update-channel"], {
+            "dest": "nightly_update_channel",
+            "help": "b2g update channel for nightly builds",
+        }],
         [["--publish-channel"], {
             "dest": "publish_channel",
             "help": "channel where build is published to",
@@ -190,7 +194,6 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
                                 'repo_repo': "https://git.mozilla.org/external/google/gerrit/git-repo.git",
                                 'repo_remote_mappings': {},
                                 'update_channel': 'default',
-                                'publish_channel': None,
                             },
                             )
 
@@ -307,6 +310,12 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         version = manifest_config['branches'][branch]
         return version
 
+    def query_update_channel(self):
+        if self.query_is_nightly() and 'nightly_update_channel' in self.config:
+            return self.config['nightly_update_channel']
+        else:
+            return self.config['update_channel']
+
     def query_revision(self):
         if 'revision' in self.buildbot_properties:
             return self.buildbot_properties['revision']
@@ -400,7 +409,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         if 'B2G_UPDATE_CHANNEL' not in env:
             env['B2G_UPDATE_CHANNEL'] = "{target}/{version}/{channel}".format(
                 target=self.config['target'],
-                channel=self.config['update_channel'],
+                channel=self.query_update_channel(),
                 version=self.query_b2g_version(),
             )
 
@@ -1239,7 +1248,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         socorro_dict = {
             'buildid': self.query_buildid(),
             'version': self.query_version(),
-            'update_channel': self.config.get('update_channel'),
+            'update_channel': self.query_update_channel(),
             #'beta_number': n/a until we build b2g beta releases
         }
         file_path = os.path.join(dirs['abs_work_dir'], 'socorro.json')
@@ -1391,7 +1400,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         upload_dir = dirs['abs_upload_dir'] + '-updates'
         # upload dated files first to be sure that update.xml doesn't
         # point to not existing files
-        update_channel = self.config['update_channel']
+        update_channel = self.query_update_channel()
         publish_channel = self.config.get('publish_channel', update_channel)
         if publish_channel is None:
             publish_channel = update_channel
