@@ -460,7 +460,6 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
 
     # Actions {{{2
     def clobber(self):
-        return
         dirs = self.query_abs_dirs()
         PurgeMixin.clobber(
             self,
