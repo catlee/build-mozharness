@@ -1362,6 +1362,16 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         dated_application_ini = "application_%s.ini" % suffix
         dated_sources_xml = "b2g_update_source_%s.xml" % suffix
         mar_url = self.config['update']['base_url'] + dated_mar
+        update_channel = self.query_update_channel()
+        publish_channel = self.config.get('publish_channel', update_channel)
+        if publish_channel is None:
+            publish_channel = update_channel
+        mar_url = mar_url.format(
+            update_channel=update_channel,
+            publish_channel=publish_channel,
+            version=self.query_b2g_version(),
+            target=self.config['target'],
+        )
 
         self.info("Generating update.xml for %s" % mar_url)
         if not self.create_update_xml(self.marfile, self.query_version(),
