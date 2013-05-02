@@ -189,7 +189,7 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
                                 'compare_locales_vcs': 'hgtool',
                                 'repo_repo': "https://git.mozilla.org/external/google/gerrit/git-repo.git",
                                 'repo_remote_mappings': {},
-                                'update_channel': 'nightly',
+                                'update_channel': 'default',
                                 'publish_channel': None,
                             },
                             )
@@ -297,6 +297,16 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         if version:
             return version.group(1)
 
+    def query_b2g_version(self):
+        manifest_config = self.config.get('manifest')
+        branch = self.query_branch()
+        if not manifest_config or not branch:
+            return 'default'
+        if branch not in manifest_config['branches']:
+            return 'default'
+        version = manifest_config['branches'][branch]
+        return version
+
     def query_revision(self):
         if 'revision' in self.buildbot_properties:
             return self.buildbot_properties['revision']
@@ -388,7 +398,11 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
             env['MOZ_BUILD_DATE'] = self.buildbot_config['properties']['buildid']
 
         if 'B2G_UPDATE_CHANNEL' not in env:
-            env['B2G_UPDATE_CHANNEL'] = self.config['update_channel']
+            env['B2G_UPDATE_CHANNEL'] = "{target}/{version}/{channel}".format(
+                target=self.config['target'],
+                channel=self.config['update_channel'],
+                version=self.query_b2g_version(),
+            )
 
         return env
 
@@ -1385,6 +1399,8 @@ class B2GBuild(LocalesMixin, MockMixin, PurgeMixin, BaseScript, VCSMixin, Toolto
         upload_remote_basepath = upload_remote_basepath.format(
             update_channel=update_channel,
             publish_channel=publish_channel,
+            version=self.query_b2g_version(),
+            target=self.config['target'],
         )
         retval = self.rsync_upload_directory(
             upload_dir,
